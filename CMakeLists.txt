@@ -138,20 +138,3 @@ target_link_libraries(
         ${OMPL_LIBRARIES}
 )
 
-add_executable(
-        target_movement_node
-        src/targetMovement.cpp
-)
-target_link_libraries(
-        target_movement_node
-        ${catkin_LIBRARIES}
-)
-
-add_executable(
-        UAV_movement_node
-        src/UAVMovement.cpp
-)
-target_link_libraries(
-        UAV_movement_node
-        ${catkin_LIBRARIES}
-)

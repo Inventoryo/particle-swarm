@@ -84,7 +84,6 @@ public:
     double search_r;
 
     double particle_r;
-    int coverd_area_cnt;
 
     Eigen::Vector2d Gbest_position;
     Eigen::Vector2d last_Gbest_position;
@@ -92,60 +91,14 @@ public:
     double Gbest_fitness;
 
     std::queue<std::vector<double>> path_;//states
-    std::vector<particle*> swarm;
-    std::vector<std::pair<Eigen::Vector2d,int>> target_position;//
+
+    std::vector<particle> swarm;
+    std::map<int,int> covered_grid_id;////第一项栅格ID,第二项被跟踪次数
+    std::map<int,std::pair<int,int> > covered_target_id;//第一项被跟踪的目标ID，第二项(栅格ID,该栅格已被搜索次数)
     std::map<int, int> Tj;//第一项被跟踪的目标ID，第二项该目标是否被更好的无人机追踪，0,1
     int track_target_num;
     bool isConvergenced;//
 
-};
-
-class nion{
-public:
-    nion() {};
-    ~nion() {};
-    std::vector<int> parent;
-    std::vector<std::vector<int>> barrel;
-    int unionsearch(int root) //查找根结点
-    {
-        int son, tmp;
-        son = root;
-        while(root != parent[root]) //寻找根结点
-            root = parent[root];
-        while(son != root) //路径压缩
-        {
-            tmp = parent[son];
-            parent[son] = root;
-            son = tmp;
-        }
-        return root;
-    }
-
-    void join(int root1, int root2) //判断是否连通，不连通就合并
-    {
-        int x, y;
-        x = unionsearch(root1);
-        y = unionsearch(root2);
-        if(x != y) //如果不连通，就把它们所在的连通分支合并
-            parent[y] = x;
-    }
-    void setup_barrel(){
-        barrel.clear();
-        for(int i =0;i<parent.size();i++){
-            if(i==parent[i]){
-                std::vector<int> temp;
-                temp.push_back(i);
-                barrel.push_back(temp);
-            }else{
-                for(int j =0;j<barrel.size();j++){
-                    if(barrel[j].front()==parent[i]){
-                        barrel[j].push_back(i);
-                        break;
-                    }
-                }
-            }
-        }
-    };
 };
 
 #endif //SRC_UTILITY_H
