@@ -270,7 +270,7 @@ bool init() {
     temp_target->accelerate.x() = 0;//线加速度
     temp_target->accelerate.y() = 0;//角速度
     target.push_back(temp_target);
-
+    temp_target = new TARGET();
     temp_target->position.x() = 30000;//PosMin.x + (PosMax.x - PosMin.x) * (double)rand() / RAND_MAX;10+i*100
     temp_target->position.y() = 60000;//PosMin.y + (PosMax.y - PosMin.y) * (double)rand() / RAND_MAX;30+i*200
     temp_target->velocity.x() = 150;//线速度
@@ -278,7 +278,7 @@ bool init() {
     temp_target->accelerate.x() = 0;//线加速度
     temp_target->accelerate.y() = 0;//角速度
     target.push_back(temp_target);
-
+    temp_target = new TARGET();
     temp_target->position.x() = 50000;//PosMin.x + (PosMax.x - PosMin.x) * (double)rand() / RAND_MAX;10+i*100
     temp_target->position.y() = 70000;//PosMin.y + (PosMax.y - PosMin.y) * (double)rand() / RAND_MAX;30+i*200
     temp_target->velocity.x() = 150;//线速度
@@ -347,21 +347,21 @@ void updateTargetStates() {
 
         //边界判断
         if (target[target_tag]->position.x() < PosMin.x()) {
-            line_X = -line_X;
             target[target_tag]->position.x() = PosMin.x();
+            target[target_tag]->velocity.y() = pi * (0.5 - (rand() % 1000) / 1000.0);//角度
         }
         else if (target[target_tag]->position.x() > PosMax.x()) {
-            line_X = -line_X;
             target[target_tag]->position.x() = PosMax.x();
+            target[target_tag]->velocity.y() = pi * (0.5 + (rand() % 1000) / 1000.0);//角度
         }
 
         if (target[target_tag]->position.y() < PosMin.y()) {
-            line_Y = -line_Y;
             target[target_tag]->position.y() = PosMin.y();
+            target[target_tag]->velocity.y() = pi * ((rand() % 1000) / 1000.0);//角度
         }
         else if (target[target_tag]->position.y() > PosMax.y()) {
-            line_Y = -line_Y;
             target[target_tag]->position.y() = PosMax.y();
+            target[target_tag]->velocity.y() = pi * (1 + (rand() % 1000) / 1000.0);//角度
         }
         output_target << target[target_tag]->position.x() << " " << target[target_tag]->position.y() << " ";
     }
@@ -505,12 +505,14 @@ int main(int argc, char** argv)
     init();
 
     int cunt = 0;
-    while (cunt < 10000) {
+    while (cunt < 2000) {
         //如果无人机到达全局最优，则重新洒粒子
         for (int i = 0; i < UAV_num; i++) {
             if (uav[i]->path_.empty()) {
                 spreadParticles(uav[i]);
-                updateParticleStates(uav[i]);
+                for(int j=0;j<50;j++){
+                    updateParticleStates(uav[i]);
+                }
                 uav[i]->traj_Point = uav[i]->Gbest_position;
                 updateUAVStatesInDubinsState(uav[i]);
             }
