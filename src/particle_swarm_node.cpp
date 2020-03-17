@@ -22,7 +22,7 @@
 using namespace std;
 
 const double pi = 3.141592653;
-const int resolution = 500;//?????50
+const int resolution = 50;//?????50
 const int particle_num = 50;
 const int UAV_num = 9;
 const int target_num = 3;
@@ -36,7 +36,7 @@ double AccMax = 0.6;
 double AccMin = -0.6;
 const int search_R = 8000;
 const double dt = 1;
-const double particle_R = VelMax.x() * dt;
+const double particle_R = 10*VelMax.x() * dt;
 const double communication_R = 500000;//5000
 const double g = 9.8;
 const double tanTheta = sqrt(1.0 / 3);
@@ -71,6 +71,18 @@ bool tracked[3] = { false };
 
 double dist(Eigen::Vector2d& a, Eigen::Vector2d& b) {
     return sqrt((a.x() - b.x())*(a.x() - b.x()) + (a.y() - b.y())*(a.y() - b.y()));
+}
+
+void updateSubMap(UAV * uav){
+    //更新地图信息
+    for (int i = max(0,int((uav->position.y()-search_R)/resolution)); i < min(size_y,int((uav->position.y()+search_R)/resolution)); i++) {//j是在无人机搜索半径划分的正方形区域内所在的行数
+        for (int j = max(0,int((uav->position.x()-search_R)/resolution)); j < min(size_x,int((uav->position.x()+search_R)/resolution)); j++) {//列
+            grid* temp_grid = global_map[i][j];//通过ID在全局地图中找出该栅格，并拿出
+            Eigen::Vector2d grid_pose((j+0.5)*resolution,(i+0.5)*resolution);
+            if (dist(grid_pose, uav->position) < search_R) //如果栅格在无人机探测半径内
+                temp_grid->search_count[uav->id] = 0;
+        }
+    }
 }
 
 void updateUAVStatesInDubinsState(UAV* uav){
@@ -109,7 +121,7 @@ void spreadParticles(UAV * uav) {
     srand((unsigned)time(NULL));
     for (int j = 0; j < particle_num; j++) {
         particle* temp_particle =uav->swarm[j] ;
-        double length = search_R + VelMax.x() * dt * (rand() % 1000) / 1000.0;
+        double length = search_R + particle_R * (rand() % 1000) / 1000.0;
         double theta = 2 * pi*((rand() % 1000) / 1000.0);
         temp_particle->position.x() =  length * cos(theta) + uav->position.x();
         temp_particle->position.y() =  length * sin(theta) + uav->position.y();
@@ -144,108 +156,94 @@ void spreadParticles(UAV * uav) {
     return;
 }
 
-void updateSubMap(UAV * uav){
-    //更新地图信息
-    for (int i = max(0,int((uav->position.y()-search_R)/resolution)); i < min(size_y,int((uav->position.y()+search_R)/resolution)); i++) {//j是在无人机搜索半径划分的正方形区域内所在的行数
-        for (int j = max(0,int((uav->position.x()-search_R)/resolution)); j < min(size_x,int((uav->position.x()+search_R)/resolution)); j++) {//列
-            grid* temp_grid = global_map[i][j];//通过ID在全局地图中找出该栅格，并拿出
-            Eigen::Vector2d grid_pose((j+0.5)*resolution,(i+0.5)*resolution);
-            if (dist(grid_pose, uav->position) < search_R) //如果栅格在无人机探测半径内
-                temp_grid->search_count[uav->id] = 0;
-        }
-    }
-}
-
 void updateParticleStates(UAV * uav){//更新粒子
-    //uav[i].Gbest_fitness = 0;
-    if (uav->track_target_num != -1 && tracked[uav->track_target_num])//如果无人机已经追踪到目标，则粒子群更新停止
-        return;
-    //if (uav[i].isConvergenced)//如果粒子群已收敛，则不更新
-    uav->last_Gbest_position = uav->Gbest_position;
-    for (int j = 0; j < particle_num; j++) {
-        particle & temp_part = *(uav->swarm[j]);
-        //速度更新
-        double r1 = (double)rand() / RAND_MAX;
-        double r2 = (double)rand() / RAND_MAX;
-        double line_X = temp_part.velocity.x() * cos(temp_part.velocity.y());//速度在XY向的分量
-        double line_Y = temp_part.velocity.x() * sin(temp_part.velocity.y());
-        line_X = weight * line_X + c1 * r1 *(temp_part.Pbest_position.x() - temp_part.position.x()) + c2 * r2 *(uav->Gbest_position.x() - temp_part.position.x());
-        line_Y = weight * line_Y + c1 * r1 *(temp_part.Pbest_position.y() - temp_part.position.y()) + c2 * r2 *(uav->Gbest_position.y() - temp_part.position.y());
-        temp_part.velocity.x() = sqrt(line_X * line_X + line_Y * line_Y);//粒子的速度更新公式
-        if (line_Y >= 0)
-            temp_part.velocity.y() = acos(line_X / temp_part.velocity.x());
-        else
-            temp_part.velocity.y() = 2*pi - acos(line_X / temp_part.velocity.x());
-
-        //速度限制
-        if (temp_part.velocity.x() > VelMax.x())
-            temp_part.velocity.x() = VelMax.x();
-        else if(temp_part.velocity.x() < VelMin.x())
-            temp_part.velocity.x() = VelMin.x();
-        //粒子的位置更新公式
-        temp_part.position.x() += line_X * dt;
-        temp_part.position.y() += line_Y * dt;
-        //边界判断
-        if (temp_part.position.x() < PosMin.x()) {
-            temp_part.position.x() = PosMin.x();
-            temp_part.velocity.y() = pi * (0.5 - (rand() % 1000) / 1000.0);//角度
-        }
-        else if (temp_part.position.x() > PosMax.x()) {
-            temp_part.position.x() = PosMax.x();
-            temp_part.velocity.y() = pi * (0.5 + (rand() % 1000) / 1000.0);//角度
-        }
-
-        if (temp_part.position.y() < PosMin.y()) {
-            temp_part.position.y() = PosMin.y();
-            temp_part.velocity.y() = pi * ((rand() % 1000) / 1000.0);//角度
-        }
-        else if (temp_part.position.y() > PosMax.y()) {
-            temp_part.position.y() = PosMax.y();
-            temp_part.velocity.y() = pi * (1 + (rand() % 1000) / 1000.0);//角度
-        }
-
-        //概率更新
-        int t = global_map[int(temp_part.position.y()/resolution)][int(temp_part.position.y()/resolution)]->search_count[uav->id];
-        for (int k = 0; k < target_num; k++){
-            temp_part.p[k] = (1 - exp(-tao *t )) / (global_map.size()-uav->coverd_area_cnt);
-        }
-        //适应值更新
-        double temp_fitness_1 = 0, temp_fitness_2 = 0;
-        for (int k = 0; k < target_num; k++) {
-            double Cjk = 0;
-            if (dist(target[k]->position, uav->position) < search_R)
-                Cjk =  (dist(target[k]->position, temp_part.position));//无人机k与存在目标j的匹配程度
+    uav->Gbest_fitness = 0;
+    for(int i = 0;i<50;i++){
+        uav->last_Gbest_position = uav->Gbest_position;
+        for (int j = 0; j < particle_num; j++) {
+            particle & temp_part = *(uav->swarm[j]);
+            //速度更新
+            double r1 = (double)rand() / RAND_MAX;
+            double r2 = (double)rand() / RAND_MAX;
+            double line_X = temp_part.velocity.x() * cos(temp_part.velocity.y());//速度在XY向的分量
+            double line_Y = temp_part.velocity.x() * sin(temp_part.velocity.y());
+            line_X = weight * line_X + c1 * r1 *(temp_part.Pbest_position.x() - temp_part.position.x()) + c2 * r2 *(uav->Gbest_position.x() - temp_part.position.x());
+            line_Y = weight * line_Y + c1 * r1 *(temp_part.Pbest_position.y() - temp_part.position.y()) + c2 * r2 *(uav->Gbest_position.y() - temp_part.position.y());
+            temp_part.velocity.x() = sqrt(line_X * line_X + line_Y * line_Y);//粒子的速度更新公式
+            if (line_Y >= 0)
+                temp_part.velocity.y() = acos(line_X / temp_part.velocity.x());
             else
-                Cjk = 1;
-            double Dik =   dist(uav->position, temp_part.position);//无人机k与粒子i的距离
-            double Pij = temp_part.p[k];
+                temp_part.velocity.y() = 2*pi - acos(line_X / temp_part.velocity.x());
 
-            int Tj = uav->Tj[k];//目标k是否未被与之更匹配的无人机跟踪
-            //temp_fitness_1 += Tj * (Pij  + Dik +Cjk);
-            temp_fitness_1 += Pij *  Tj / (Dik* Cjk);
+            //速度限制
+            if (temp_part.velocity.x() > VelMax.x())
+                temp_part.velocity.x() = VelMax.x();
+            else if(temp_part.velocity.x() < VelMin.x())
+                temp_part.velocity.x() = VelMin.x();
+            //粒子的位置更新公式
+            temp_part.position.x() += line_X * dt;
+            temp_part.position.y() += line_Y * dt;
+            //边界判断
+            if (temp_part.position.x() < PosMin.x()) {
+                temp_part.position.x() = PosMin.x();
+                temp_part.velocity.y() = pi * (0.5 - (rand() % 1000) / 1000.0);//角度
+            }
+            else if (temp_part.position.x() > PosMax.x()) {
+                temp_part.position.x() = PosMax.x();
+                temp_part.velocity.y() = pi * (0.5 + (rand() % 1000) / 1000.0);//角度
+            }
+
+            if (temp_part.position.y() < PosMin.y()) {
+                temp_part.position.y() = PosMin.y();
+                temp_part.velocity.y() = pi * ((rand() % 1000) / 1000.0);//角度
+            }
+            else if (temp_part.position.y() > PosMax.y()) {
+                temp_part.position.y() = PosMax.y();
+                temp_part.velocity.y() = pi * (1 + (rand() % 1000) / 1000.0);//角度
+            }
+
+            //概率更新
+            int t = global_map[int(temp_part.position.y()/resolution)][int(temp_part.position.y()/resolution)]->search_count[uav->id];
+            for (int k = 0; k < target_num; k++){
+                temp_part.p[k] = (1 - exp(-tao *t )) / (global_map.size()-uav->coverd_area_cnt);
+            }
+            //适应值更新
+            double temp_fitness_1 = 0, temp_fitness_2 = 0;
+            for (int k = 0; k < target_num; k++) {
+                double Cjk = 0;
+                if (dist(target[k]->position, uav->position) < search_R)
+                    Cjk =  (dist(target[k]->position, temp_part.position));//无人机k与存在目标j的匹配程度
+                else
+                    Cjk = 1;
+                double Dik =   dist(uav->position, temp_part.position);//无人机k与粒子i的距离
+                double Pij = temp_part.p[k];
+                int Tj = uav->Tj[k];//目标k是否未被与之更匹配的无人机跟踪
+                //temp_fitness_1 += Tj * (Pij  + Dik +Cjk);
+                temp_fitness_1 += Pij *  Tj / (Dik* Cjk);
+            }
+
+            if(t>=forget_time)
+                temp_fitness_2 = w * 1.0 / (global_map.size() - uav->coverd_area_cnt);
+            else
+                temp_fitness_2 = (1 - w)*t / (forget_time * (global_map.size() - uav->coverd_area_cnt));
+
+            double temp_fitness = w1 *1000* temp_fitness_1 + w2 *1000* temp_fitness_2;//适应值
+            //cout << "temp_fitness = " << temp_fitness <<endl;
+            if (temp_fitness >= temp_part.fitness) {//局部最优位置判断
+                temp_part.fitness = temp_fitness;
+                temp_part.Pbest_position = temp_part.position;
+            }
+
+            if (temp_fitness >= uav->Gbest_fitness) {//全局最优位置判断
+                //cout << "更新temp_fitness" << temp_fitness << " current particle" << j << endl;
+                uav->Gbest_fitness = temp_fitness;
+                uav->Gbest_position = temp_part.position;
+            }
         }
-
-        if(t>=forget_time)
-            temp_fitness_2 = w * 1.0 / (global_map.size() - uav->coverd_area_cnt);
-        else
-            temp_fitness_2 = (1 - w)*t / (forget_time * (global_map.size() - uav->coverd_area_cnt));
-
-        double temp_fitness = w1 *1000* temp_fitness_1 + w2 *1000* temp_fitness_2;//适应值
-        //cout << "temp_fitness = " << temp_fitness <<endl;
-        if (temp_fitness >= temp_part.fitness) {//局部最优位置判断
-            temp_part.fitness = temp_fitness;
-            temp_part.Pbest_position = temp_part.position;
-        }
-
-        if (temp_fitness >= uav->Gbest_fitness) {//全局最优位置判断
-            //cout << "更新temp_fitness" << temp_fitness << " current particle" << j << endl;
-            uav->Gbest_fitness = temp_fitness;
-            uav->Gbest_position = temp_part.position;
-        }
+        if (uav->last_Gbest_position.x() == uav->Gbest_position.x() && uav->last_Gbest_position.y() == uav->Gbest_position.y())
+            break;
     }
-
-    if (uav->last_Gbest_position.x() == uav->Gbest_position.x() && uav->last_Gbest_position.y() == uav->Gbest_position.y())
-        uav->isConvergenced = true;
+    uav->traj_Point = uav->Gbest_position;
     return;
 }
 
@@ -316,21 +314,16 @@ bool init() {
             uav_temp->swarm.push_back(temp);
         }
         spreadParticles(uav_temp);
-        uav.push_back(uav_temp);
-    }
+        updateParticleStates(uav_temp);
+        updateUAVStatesInDubinsState(uav_temp);
 
-    for(auto uav_ptr:uav){
-        uav_ptr->traj_Point = uav_ptr->Gbest_position;
-        updateUAVStatesInDubinsState(uav_ptr);
-        uav_ptr->isConvergenced = false;
         for (int i = 0; i < target_num; i++) {
             Eigen::Vector2d target_pose(-1,-1);
-            uav_ptr->target_position.push_back(make_pair(target_pose,forget_time));
-            uav_ptr->Tj[i] = 1;
+            uav_temp->target_position.push_back(make_pair(target_pose,forget_time));
+            uav_temp->Tj[i] = 1;
         }
-        uav_ptr->track_target_num = -1;
-    }
-    for (int i = 0; i < UAV_num; i++) {//reset
+        uav_temp->track_target_num = -1;
+        uav.push_back(uav_temp);
         union_.parent.push_back(i);
     }
     return 1;
@@ -510,10 +503,7 @@ int main(int argc, char** argv)
         for (int i = 0; i < UAV_num; i++) {
             if (uav[i]->path_.empty()) {
                 spreadParticles(uav[i]);
-                for(int j=0;j<50;j++){
-                    updateParticleStates(uav[i]);
-                }
-                uav[i]->traj_Point = uav[i]->Gbest_position;
+                updateParticleStates(uav[i]);
                 updateUAVStatesInDubinsState(uav[i]);
             }
         }
