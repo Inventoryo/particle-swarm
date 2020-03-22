@@ -17,6 +17,9 @@
 #include <ompl/base/spaces/DubinsStateSpace.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/State.h>
+
+#include "steering_functions/hc_cc_state_space/cc_dubins_state_space.hpp"
+
 using namespace std;
 
 //common
@@ -26,37 +29,37 @@ const double g = 9.8;
 
 //map
 const int resolution = 100;//?????50
-const point2D PosMin(0, 0);
-const point2D PosMax(100000, 100000);
+const utility::point2D PosMin(0, 0);
+const utility::point2D PosMax(100000, 100000);
 int size_x = ceil((PosMax.y - PosMin.y) / resolution) + 1;
 int size_y = ceil((PosMax.y - PosMin.y) / resolution) + 1;
-vector<vector<grid*>> global_map;
+vector<vector<utility::grid*>> global_map;
 
 //target
 const int target_num = 3;
-vector<TARGET*> target;
+vector<utility::TARGET*> target;
 
 //uav
 const int UAV_num = 9;
-const point2D VelMax(200, pi / 6);
-const point2D VelMin(150, -pi / 6);
+const utility::point2D VelMax(200, pi / 6);
+const utility::point2D VelMin(150, -pi / 6);
 double AccMax = 0.6;
 double AccMin = -0.6;
 const int search_R = 8000;
 const double communication_R = 500000;//5000
 const double tanTheta = sqrt(1.0 / 3);
 const double forget_time = 10000;
-vector<UAV*> uav;
+vector<utility::UAV*> uav;
 
 //particle
 const int particle_num = 100;
 const double particle_R = resolution+2*VelMax.x * dt;
 const double tao = 1;
 const double w1 = 1;
-const double w2 = 100;
+const double w2 = 1000;
 const double weight = 1;
 const double c1 = 2;
-const double c2 = 0.0001;
+const double c2 = 0.001;
 const double  w = 0.5;
 
 //output
@@ -68,27 +71,62 @@ const string target_path = "target.txt";
 const string traj_Point_path = "traj_Point.txt";
 
 //others
-nion union_;//Disjoint Set
+utility::nion union_;//Disjoint Set
 vector<vector<double>> target_state(UAV_num, vector<double>(target_num, 0));
 vector<bool> tracked(target_num,false);
+CC_Dubins_State_Space  cc_dubins_state_space_ptr_(1/(VelMin.x * VelMin.x / (g * tanTheta)),2*g*AccMax/(VelMin.x * VelMin.x*VelMin.x ) ,10);
+steer::State s1,s2;
 
 
-double dist(point2D& a, point2D& b) {
+double dist(utility::point2D& a, utility::point2D& b) {
     return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
 }
 
-double dubinsDistance(State* state1,State* state2){
-    double theTi = acos((state2->position.x - state1->position.x) / dist(state1->position, state2->position));
-    HybridAStar::DubinsPath* path = new HybridAStar::DubinsPath();
+double dubinsDistance(utility::State* state1,utility::State* state2){
     double minR = state1->velocity.x * state1->velocity.x / (g * tanTheta);//最小转弯半径
+    double l = dist(state1->position, state2->position);
+    double theTa1 = acos((state2->position.x - state1->position.x) / l);
+    double theTa2 = state1->velocity.y-theTa1;
+    double theTi,d;
+    if(theTa2<-pi/2){
+        theTa2+=pi;
+         d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = asin(minR*cos(theTa2)/d) + asin(minR/d) + theTa1;
+    }else if(theTa2<0){
+        theTa2*=-1;
+         d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = asin(minR/d) - asin(minR*cos(theTa2)/d) + theTa1;
+    }else if(theTa2>pi/2){
+        theTa2 = pi-theTa2;
+         d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = -asin(minR/d) - asin(minR*cos(theTa2)/d) + theTa1;
+    } else{
+         d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = -asin(minR/d) + asin(minR*cos(theTa2)/d) + theTa1;
+    }
+    /*
+    HybridAStar::DubinsPath* path = new HybridAStar::DubinsPath();
     double q1[3]={state1->position.x,state1->position.y,state1->velocity.y};//start point state
     double q2[3]={state2->position.x,state2->position.y,theTi};//end point state;
     HybridAStar::dubins_init(q1,q2,minR,path);
     return HybridAStar::dubins_path_length(path);
+    */
+
+    s1.x = state1->position.x;
+    s1.y = state1->position.y;
+    s1.theta = state1->velocity.y;
+    s1.kappa = 1/minR;
+    s2.x = state2->position.x;
+    s2.y = state2->position.y;
+    s2.theta = theTi;
+    s2.kappa = 1;
+    return cc_dubins_state_space_ptr_.get_distance(s1,s2);
+
 }
 
-void updateSubMap(UAV * uav){
+void updateSubMap(utility::UAV * uav){
     //更新地图信息
+    /*
     uav->coverd_area_cnt=0;
     int id =uav->id;
     for(int i =0;i<size_y;i++){
@@ -106,14 +144,71 @@ void updateSubMap(UAV * uav){
             }
         }
     }
+    */
+    for (int i = max(0,int((uav->state->position.y-search_R)/resolution)); i < min(size_y,int((uav->state->position.y+search_R)/resolution)); i++) {//j是在无人机搜索半径划分的正方形区域内所在的行数
+        for (int j = max(0,int((uav->state->position.x-search_R)/resolution)); j < min(size_x,int((uav->state->position.x+search_R)/resolution)); j++) {//列
+            utility::grid* temp_grid = global_map[i][j];//通过ID在全局地图中找出该栅格，并拿出
+            utility::point2D grid_pose((j+0.5)*resolution,(i+0.5)*resolution);
+            if (dist(grid_pose, uav->state->position) < search_R) //如果栅格在无人机探测半径内
+                temp_grid->search_count[uav->id] = 0;
+        }
+    }
 
     return;
 }
 
-void updateUAVStatesInDubinsState(UAV* uav){
-    double theTi = acos((uav->traj_Point.x - uav->state->position.x) / dist(uav->traj_Point, uav->state->position));
-    HybridAStar::DubinsPath* path = new HybridAStar::DubinsPath();
+void updateUAVStatesInDubinsState(utility::UAV* uav){
     double minR = uav->state->velocity.x * uav->state->velocity.x / (g * tanTheta);//最小转弯半径
+    double l = dist(uav->traj_Point, uav->state->position);
+    double theTa1 = acos((uav->traj_Point.x - uav->state->position.x) / l);
+    double theTa2 = uav->state->velocity.y-theTa1;
+    double theTi;
+    if(theTa2<-pi/2){
+        theTa2+=pi;
+        double d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = asin(minR*cos(theTa2)/d) + asin(minR/d) + theTa1;
+    }else if(theTa2<0){
+        theTa2*=-1;
+        double d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = asin(minR/d) - asin(minR*cos(theTa2)/d) + theTa1;
+    }else if(theTa2>pi/2){
+        theTa2 = pi-theTa2;
+        double d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = -asin(minR/d) - asin(minR*cos(theTa2)/d) + theTa1;
+    } else{
+        double d = sqrt((l-minR*sin(theTa2))*(l-minR*sin(theTa2))+minR*cos(theTa2)*minR*cos(theTa2));
+        theTi = -asin(minR/d) + asin(minR*cos(theTa2)/d) + theTa1;
+    }
+
+
+
+    s1.x = uav->state->position.x;
+    s1.y = uav->state->position.y;
+    s1.theta = uav->state->velocity.y;
+    s1.kappa = minR;
+    s2.x = uav->traj_Point.x;
+    s2.y = uav->traj_Point.y;
+    s2.theta = theTi;
+    s2.kappa = 1;
+    double velocity = uav->state->velocity.x;
+    double t=dt*velocity,total_lenth = cc_dubins_state_space_ptr_.get_distance(s1,s2);
+    while(!uav->path_.empty())
+        uav->path_.pop();
+    vector<State> temp_path = cc_dubins_state_space_ptr_.get_path(s1,s2);
+
+    while(t<=total_lenth){
+        int index = t/10;
+        vector<double> temp;
+        temp.push_back(temp_path[index].x);
+        temp.push_back(temp_path[index].y);
+        temp.push_back(velocity);
+        temp.push_back(temp_path[index].theta);
+        uav->path_.push(temp);
+        t+=velocity*dt;
+    }
+
+    /*
+    HybridAStar::DubinsPath* path = new HybridAStar::DubinsPath();
     double q0[3]={uav->state->position.x,uav->state->position.y,uav->state->velocity.y};//start point state
     double q1[3]={uav->traj_Point.x,uav->traj_Point.y,theTi};//end point state;
     HybridAStar::dubins_init(q0,q1,minR,path);
@@ -139,12 +234,15 @@ void updateUAVStatesInDubinsState(UAV* uav){
             t+=velocity*dt;
         }
     }
+
+    */
+    return;
 }
 
-void spreadParticles(UAV * uav) {
+void spreadParticles(utility::UAV * uav) {
     srand((unsigned)time(NULL));
     for (int j = 0; j < particle_num; j++) {
-        particle* temp_particle =uav->swarm[j] ;
+        utility::particle* temp_particle =uav->swarm[j] ;
         double length = search_R + resolution + particle_R * (rand() % 1000) / 1000.0;
         double theta = 2 * pi*((rand() % 1000) / 1000.0);
         temp_particle->state->position.x =  length * cos(theta) + uav->state->position.x;
@@ -179,12 +277,12 @@ void spreadParticles(UAV * uav) {
     return;
 }
 
-void updateParticleStates(UAV * uav){//更新粒子
+void updateParticleStates(utility::UAV * uav){//更新粒子
     uav->Gbest_fitness = 0;
     for(int i = 0;i<50;i++){
         uav->last_Gbest_position = uav->Gbest_position;
         for (int j = 0; j < particle_num; j++) {
-            particle & temp_part = *(uav->swarm[j]);
+            utility::particle & temp_part = *(uav->swarm[j]);
             //速度更新
             double r1 = (double)rand() / RAND_MAX;
             double r2 = (double)rand() / RAND_MAX;
@@ -275,8 +373,8 @@ void updateParticleStates(UAV * uav){//更新粒子
 bool init() {
     //target
     for(int i =0;i<target_num;i++){
-        TARGET* temp_target = new TARGET();
-        temp_target->state->position.x = 20000 +i*20000;//PosMin.x + (PosMax.x - PosMin.x) * (double)rand() / RAND_MAX;10+i*100
+        utility::TARGET* temp_target = new utility::TARGET();
+        temp_target->state->position.x = 30000 +i*20000;//PosMin.x + (PosMax.x - PosMin.x) * (double)rand() / RAND_MAX;10+i*100
         temp_target->state->position.y = 50000+i*20000;//PosMin.y + (PosMax.y - PosMin.y) * (double)rand() / RAND_MAX;30+i*200
         temp_target->state->velocity.x = 40;//线速度
         temp_target->state->velocity.y = 2 * pi*rand() / RAND_MAX;//角度
@@ -286,9 +384,9 @@ bool init() {
     }
     //map
     for (int i = 0; i < size_y ; i++) {//初始化地图，i=0代表第一行，j=0代表第一列
-        vector<grid*> temp;
+        vector<utility::grid*> temp;
         for (int j = 0; j < size_x ; j++) {
-            grid* tempGridPtr = new grid();
+            utility::grid* tempGridPtr = new utility::grid();
             for(int k=0;k<UAV_num;k++)
                 tempGridPtr->search_count.push_back(forget_time);
             temp.push_back(tempGridPtr);
@@ -297,7 +395,7 @@ bool init() {
     }
     //UAV
     for (int i = 0; i < UAV_num; i++) {//初始化无人机
-        UAV* uav_temp = new UAV();
+        utility::UAV* uav_temp = new utility::UAV();
         srand((int(time(NULL)) + i));
         uav_temp->id =i;
         uav_temp->state->position.x = 1000;//位置
@@ -308,20 +406,24 @@ bool init() {
         uav_temp->state->accelerate.y = 0;//角速度
         uav_temp->search_r = search_R;
         uav_temp->particle_r = particle_R;
-        uav_temp->coverd_area_cnt =0;
+        uav_temp->coverd_area_cnt =5000;
         for (int j = 0; j < target_num; j++) {
-            point2D target_pose(-1,-1);
+            utility::point2D target_pose(-1,-1);
             uav_temp->target_position.push_back(make_pair(target_pose,forget_time));
             uav_temp->Tj[j] = 1;
         }
         updateSubMap(uav_temp);
         for (int j = 0; j < particle_num; j++) {
-            particle* temp = new particle();
+            utility::particle* temp = new utility::particle();
             uav_temp->swarm.push_back(temp);
         }
+        cout<<"1"<<endl;
         spreadParticles(uav_temp);
+        cout<<"2"<<endl;
         updateParticleStates(uav_temp);
+        cout<<"3"<<endl;
         updateUAVStatesInDubinsState(uav_temp);
+        cout<<"4"<<endl;
         while(uav_temp->path_.size()>1){//only keep one state
             uav_temp->path_.pop();
         }
@@ -408,8 +510,8 @@ void informationShare() {
         union_.parent[i]=i;
         uav[i]->coverd_area_cnt=0;
     }
-    for (int i = 0; i < UAV_num-1; i++) {
-        for (int j = i+1; j < UAV_num; j++) {
+    for (int i = 0; i < UAV_num; i++) {
+        for (int j = i; j < UAV_num; j++) {
             if(dist(uav[i]->state->position, uav[j]->state->position) <= communication_R){//union
                 union_.join(i,j);
             }
@@ -449,7 +551,7 @@ void updateMission() {
             if (uav[i]->target_position[j].second >= forget_time)
                 target_state[i][j] = 0;//不让无人机i去追目标j
             else
-                target_state[i][j] = 1000.0 / dubinsDistance(uav[i]->state, target[j]->state);
+                target_state[i][j] = 1000.0 / dist(uav[i]->state->position, target[j]->state->position);
         }
     }
     set<int> row, col;
@@ -490,6 +592,7 @@ void updateMission() {
             if (uav[i]->Tj[j] == 1 && uav[i]->target_position[j].second < forget_time) {//分配该无人机追踪该目标
                 uav[i]->track_target_num = j;
                 uav[i]->traj_Point = target[j]->state->position;
+                uav[i]->state->velocity.x = 2*target[j]->state->velocity.x;
                 updateUAVStatesInDubinsState(uav[i]);
                 cout << "uav " << i << " is tracking target " << j << endl;
                 break;
